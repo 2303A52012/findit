@@ -34,27 +34,44 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
-// Health check endpoint for uptime monitoring & container probes
-app.get('/api/health', (req, res) => {
+// Root endpoint for easy deployment verification
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'FindIt API is running successfully',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      items: '/api/items',
+      dashboard: '/api/me'
+    }
+  });
+});
+
+// Health check endpoints for uptime monitoring & container probes
+const healthHandler = (req, res) => {
   res.json({
     status: 'ok',
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   });
-});
+};
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
 
 // Main API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/me', dashboardRoutes);
 
-// In production, serve static client files if build exists (Unified single-service deployment)
+// In unified production deployments, serve static client files if build exists
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
   // Express 4/5 compatible SPA fallback (bypasses path-to-regexp wildcard syntax issues)
   app.use((req, res, next) => {
-    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    if (req.method === 'GET' && !req.path.startsWith('/api') && req.path !== '/health') {
       return res.sendFile(path.join(clientDistPath, 'index.html'));
     }
     next();
