@@ -1,0 +1,19 @@
+{
+  "name": "findit-lost-and-found",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FindIt – Complete Lost & Found Fullstack Platform",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "install:server": "npm --prefix server install",
+    "install:client": "npm --prefix client install",
+    "postinstall": "npm run install:server && npm run install:client",
+    "build": "npm --prefix client run build",
+    "start": "node server/src/server.js",
+    "dev": "npm --prefix server run dev",
+    "test": "npm --prefix server test"
+  }
+}
+
