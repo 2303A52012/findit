@@ -68,6 +68,7 @@ if (claimController) {
     body('message').trim().isLength({ min: 1, max: 2000 }).withMessage('Message cannot be empty or longer than 2000 characters'),
     claimController.sendClaimMessage
   );
+  router.patch('/claims/:claimId/handshake', authenticate, claimController.updateClaimHandshake);
 }
 
 module.exports = router;

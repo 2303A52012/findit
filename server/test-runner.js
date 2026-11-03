@@ -366,6 +366,75 @@ async function run() {
     const resolvedClaim = await request('GET', '/api/me/claims', null, user2Token);
     assert(resolvedClaim.data[0].status === 'Approved', 'Resolved item automatically approves its pending claim');
 
+    // Chat is disabled on resolved claim
+    const postToResolvedChat = await request(
+      'POST',
+      `/api/items/claims/${claimId}/messages`,
+      { message: 'Trying to chat after resolution' },
+      user1Token
+    );
+    assert(postToResolvedChat.status === 403, 'Chat access is disabled when claim/item is resolved (403)');
+
+    // 14b. Testing Sent/Received Handshake Workflow
+    console.log('\n[14b] Testing Handshake Workflow ("Sent" and "Received")');
+    // Create a new lost item and claim for handshake testing
+    const handshakeItemRes = await request(
+      'POST',
+      '/api/items',
+      {
+        reportType: 'Lost',
+        title: 'Silver Laptop Charger',
+        category: 'Electronics',
+        description: '65W USB-C charger left in lecture hall 3.',
+        eventDate: '2026-10-30',
+        locationText: 'Lecture Hall 3',
+        imageUrl: ''
+      },
+      user1Token
+    );
+    const handshakeItemId = handshakeItemRes.data._id;
+
+    const handshakeClaimRes = await request(
+      'POST',
+      `/api/items/${handshakeItemId}/claims`,
+      { message: 'I found your charger plugged in the back row!' },
+      user2Token
+    );
+    const hsClaimId = handshakeClaimRes.data._id;
+
+    // Finder (User 2) marks Sent
+    const markSentRes = await request(
+      'PATCH',
+      `/api/items/claims/${hsClaimId}/handshake`,
+      { action: 'sent' },
+      user2Token
+    );
+    assert(markSentRes.status === 200, 'Finder can mark item as Sent');
+    assert(markSentRes.data.claim.senderSent === true, 'claim.senderSent is now true');
+    assert(markSentRes.data.claim.chatDisabled === false, 'Chat is still active before Received is confirmed');
+
+    // Loser (User 1) marks Received
+    const markReceivedRes = await request(
+      'PATCH',
+      `/api/items/claims/${hsClaimId}/handshake`,
+      { action: 'received' },
+      user1Token
+    );
+    assert(markReceivedRes.status === 200, 'Owner can mark item as Received');
+    assert(markReceivedRes.data.claim.receiverReceived === true, 'claim.receiverReceived is now true');
+    assert(markReceivedRes.data.claim.status === 'Approved', 'Claim is automatically Approved when both confirm');
+    assert(markReceivedRes.data.claim.chatDisabled === true, 'Chat access is disabled when both confirm');
+    assert(markReceivedRes.data.itemResolved === true, 'Item report is marked Resolved');
+
+    // Messages now fail with 403
+    const chatAfterHandshake = await request(
+      'POST',
+      `/api/items/claims/${hsClaimId}/messages`,
+      { message: 'Checking if chat is locked' },
+      user1Token
+    );
+    assert(chatAfterHandshake.status === 403, 'Chat message blocked after both approve handshake (403)');
+
     // Moderator updates status to Removed
     const modRemove = await request(
       'PATCH',

@@ -176,12 +176,12 @@ async function updateItem(req, res, next) {
       if (item.status === 'Resolved') {
         await Claim.updateMany(
           { itemReportId: item._id, status: 'Pending' },
-          { $set: { status: 'Approved' } }
+          { $set: { status: 'Approved', chatDisabled: true } }
         );
       } else if (item.status === 'Removed') {
         await Claim.updateMany(
           { itemReportId: item._id, status: 'Pending' },
-          { $set: { status: 'Rejected' } }
+          { $set: { status: 'Rejected', chatDisabled: true } }
         );
       }
     }

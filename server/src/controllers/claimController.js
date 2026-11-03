@@ -87,6 +87,19 @@ async function sendClaimMessage(req, res, next) {
         || itemOwnerId === req.user._id.toString();
       if (!canAccess) return res.status(403).json({ message: 'You are not a participant in this conversation' });
 
+      // Check if chat access is disabled (e.g. claim is resolved, approved, rejected, or chatDisabled flag set)
+      if (
+        claim.chatDisabled ||
+        claim.status === 'Approved' ||
+        claim.status === 'Rejected' ||
+        claim.itemReportId?.status === 'Resolved' ||
+        claim.itemReportId?.status === 'Removed'
+      ) {
+        return res.status(403).json({
+          message: 'Chat access is disabled for this conversation because the claim has been resolved or closed'
+        });
+      }
+
       const message = await ClaimMessage.create({
         claimId: claim._id,
         senderId: req.user._id,
@@ -121,6 +134,9 @@ async function myClaims(req, res, next) {
           : claim.status;
       if (syncedStatus !== claim.status && claim.status === 'Pending') {
         claim.status = syncedStatus;
+        if (syncedStatus === 'Approved' || syncedStatus === 'Rejected') {
+          claim.chatDisabled = true;
+        }
         await claim.save();
       }
     }
@@ -130,4 +146,93 @@ async function myClaims(req, res, next) {
   }
 }
 
-module.exports = { createClaim, myItems, myClaims, getItemClaims, getClaimConversation, sendClaimMessage };
+async function updateClaimHandshake(req, res, next) {
+  try {
+    const { action } = req.body; // 'sent', 'received', or 'admin_approve'
+    if (!['sent', 'received', 'admin_approve'].includes(action)) {
+      return res.status(400).json({ message: 'Invalid handshake action. Must be "sent", "received", or "admin_approve".' });
+    }
+
+    const claim = await Claim.findById(req.params.claimId).populate('itemReportId');
+    if (!claim) return res.status(404).json({ message: 'Claim not found' });
+
+    const item = claim.itemReportId;
+    if (!item) return res.status(404).json({ message: 'Associated item report not found' });
+
+    const currentUserId = req.user._id.toString();
+    const itemOwnerId = (item.ownerId._id || item.ownerId).toString();
+    const claimantId = (claim.claimantId._id || claim.claimantId).toString();
+    const isModerator = req.user.role === 'moderator';
+
+    // Verify participant or moderator
+    const canAccess = isModerator || currentUserId === claimantId || currentUserId === itemOwnerId;
+    if (!canAccess) {
+      return res.status(403).json({ message: 'You are not a participant in this conversation' });
+    }
+
+    // Identify who lost the item (Receiver) and who found it (Sender)
+    // If item.reportType is 'Lost': Owner lost it (Receiver), Claimant found it (Sender).
+    // If item.reportType is 'Found': Owner found it (Sender), Claimant lost it (Receiver).
+    const isLostReport = item.reportType === 'Lost';
+    const loserId = isLostReport ? itemOwnerId : claimantId;
+    const finderId = isLostReport ? claimantId : itemOwnerId;
+
+    if (action === 'sent') {
+      if (!isModerator && currentUserId !== finderId) {
+        return res.status(403).json({ message: 'Only the finder who sends or hands over the item can mark it as Sent.' });
+      }
+      claim.senderSent = true;
+      claim.sentAt = new Date();
+    } else if (action === 'received') {
+      if (!isModerator && currentUserId !== loserId) {
+        return res.status(403).json({ message: 'Only the person who lost the item and received it can mark it as Received.' });
+      }
+      claim.receiverReceived = true;
+      claim.receivedAt = new Date();
+    } else if (action === 'admin_approve') {
+      if (!isModerator) {
+        return res.status(403).json({ message: 'Only administrators can perform administrative approval.' });
+      }
+      claim.senderSent = true;
+      claim.receiverReceived = true;
+      if (!claim.sentAt) claim.sentAt = new Date();
+      if (!claim.receivedAt) claim.receivedAt = new Date();
+    }
+
+    // If both parties approved/confirmed or admin verified
+    if (claim.senderSent && claim.receiverReceived) {
+      claim.status = 'Approved';
+      claim.chatDisabled = true;
+
+      // Update the item report status to Resolved
+      item.status = 'Resolved';
+      await item.save();
+    }
+
+    await claim.save();
+
+    const populated = await Claim.findById(claim._id)
+      .populate('itemReportId')
+      .populate('claimantId', 'name email');
+
+    res.json({
+      message: claim.chatDisabled
+        ? 'Handover completed and verified. Chat access is now disabled for all participants.'
+        : `Handover status updated (${action} confirmed).`,
+      claim: populated,
+      itemResolved: item.status === 'Resolved'
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = {
+  createClaim,
+  myItems,
+  myClaims,
+  getItemClaims,
+  getClaimConversation,
+  sendClaimMessage,
+  updateClaimHandshake
+};
